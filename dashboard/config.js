@@ -50,6 +50,23 @@ module.exports = {
         DM_RESULTS: true,
         SESSION_MINUTES: 30,
 
+        portfolio: {
+            enabled: true,
+            FORUM_CHANNEL_ID: '1555741888420642837', // your portfolio forum channel
+            positions: ['designer'], // which positions get a portfolio
+            servicesQuestion: 'What do you design?', // label of the question used for "Services"
+            imageUrl: 'https://yumi.onl/api/files/6ad3fe9405ab7635c7298dfe/raw', // image shown on every portfolio
+            imagePosition: 'bottom', // 'top' or 'bottom' of the container
+            tagIds: [], // optional forum tag IDs to put on the thread
+ 
+            // {name} = their display name, {mention} = @ping, {services} = their answer
+            threadTitle: '{name}\'s Portfolio',
+            title: 'Designer Portfolio',
+            text: 'This portfolio belongs to {mention}. All images featured in this portfolio are the property of the designer and may not be reproduced, copied, or used in any form without prior permission.',
+            ping: '{mention}, welcome to the team! This is your portfolio. Post your work here so clients can see what your previous work.',
+        },
+
+
         positions: {
             designer: {
                 label: 'Designer',

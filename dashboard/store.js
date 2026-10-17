@@ -6,9 +6,9 @@ const FILE = path.join(__dirname, '..', 'data', 'dashboard.json')
 function load() {
     try {
         const data = JSON.parse(fs.readFileSync(FILE, 'utf8'))
-        return { open: data.open ?? {}, pending: data.pending ?? {}, cooldowns: data.cooldowns ?? {} }
+        return { open: data.open ?? {}, pending: data.pending ?? {}, cooldowns: data.cooldowns ?? {}, portfolios: data.portfolios ?? {} }
     } catch {
-        return { open: {}, pending: {}, cooldowns: {} }
+        return { open: {}, pending: {}, cooldowns: {}, portfolios: {} }
     }
 }
 

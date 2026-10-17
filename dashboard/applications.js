@@ -18,6 +18,7 @@ const config = require('./config')
 const store = require('./store')
 const { text, separator, unix, quote, truncate, withBanner, withFooter, v2 } = require('./ui')
 const { isManager } = require('../tickets/util')
+const portfolio = require('./portfolio')
 
 const apps = config.applications
 const PAGE_SIZE = 5 // Discord allows 5 inputs per form
@@ -296,7 +297,8 @@ async function submit(interaction, key, answers) {
             allowedMentions: { roles: pos.pingRoleIds ?? [], users: [] },
         })
         const after = store.load()
-        after.pending[k] = { messageId: message.id, submittedAt: Date.now() }
+        // Answers are kept so accept can use them (e.g. Services on the portfolio)
+        after.pending[k] = { messageId: message.id, submittedAt: Date.now(), answers }
         store.save(after)
         return { ok: true }
     } catch (err) {
@@ -400,6 +402,8 @@ async function handleDecisionSubmit(interaction, decision, userId, key) {
             }
         }
 
+        const answers = data.pending[k].answers ?? []
+
         let cooldownUntil = null
         if (!accepted && pos.denyCooldownHours > 0) {
             cooldownUntil = Date.now() + pos.denyCooldownHours * 3_600_000
@@ -410,10 +414,20 @@ async function handleDecisionSubmit(interaction, decision, userId, key) {
 
         const dmSent = await dmResult(interaction.client, userId, pos, accepted, interaction.user, note, cooldownUntil)
 
+        // Portfolio thread for accepted designers
+        let portfolioLine = null
+        if (accepted && portfolio.appliesTo(key)) {
+            const result = await portfolio.create(interaction.guild, userId, portfolio.servicesFrom(answers))
+            portfolioLine = result.error
+                ? `-# ⚠️ Couldn't create their portfolio: ${result.error} Use \`/portfolio\` to make it manually.`
+                : `-# 📁 Portfolio created: <#${result.thread.id}>`
+        }
+
         const line = [
             `${accepted ? '✅ **Accepted**' : '❌ **Denied**'} by <@${interaction.user.id}> <t:${unix()}:R>`,
             note ? `**${accepted ? 'Note' : 'Reason'}:** ${note}` : null,
             dmSent ? null : '-# Couldn\'t DM the applicant (DMs closed).',
+            portfolioLine,
         ].filter(Boolean).join('\n')
 
         await interaction.editReply({
@@ -455,5 +469,5 @@ function summary() {
 module.exports = {
     openMenu, handleSelect, handleFormSubmit, handleNext,
     handleDecisionButton, handleDecisionSubmit,
-    position, setOpen, resetUser, summary,
+    position, setOpen, resetUser, summary, canReview,
 }

@@ -5,10 +5,17 @@ const {
     ActionRowBuilder,
     ButtonBuilder,
     ButtonStyle,
+    ComponentType,
     ModalBuilder,
     LabelBuilder,
     TextInputBuilder,
     TextInputStyle,
+    ContainerBuilder,
+    TextDisplayBuilder,
+    SeparatorBuilder,
+    SeparatorSpacingSize,
+    MediaGalleryBuilder,
+    MediaGalleryItemBuilder,
 } = require('discord.js')
 const config = require('./config')
 const store = require('./store')
@@ -18,7 +25,9 @@ const {
 } = require('./util')
 const { buildNotice, buildCloseRequest } = require('./messages')
 
-const closing = new Set() 
+const closing = new Set() // channel IDs being closed
+
+// ---------- Transcript ----------
 
 async function fetchAll(channel) {
     const all = []
@@ -33,6 +42,7 @@ async function fetchAll(channel) {
     return all.reverse()
 }
 
+// Text out of Components V2 messages
 function extractText(components = []) {
     const out = []
     for (const c of components) {
@@ -150,6 +160,8 @@ async function sendTranscript(channel, t, closedBy, reason) {
     }))
 }
 
+// ---------- DM + review ----------
+
 async function dmOpener(client, t, closedBy, reason) {
     if (!config.DM_ON_CLOSE) return
     const user = await client.users.fetch(t.openerId).catch(() => null)
@@ -167,12 +179,14 @@ async function dmOpener(client, t, closedBy, reason) {
     )
 
     if (wantsReview) {
+        // Everything the review needs lives in the button itself, so it keeps
+        // working no matter what happens to the data file after the DM is sent.
         c.addSeparatorComponents(separator())
             .addTextDisplayComponents(text('How did we do? Leave a review for your order below.'))
             .addActionRowComponents(
                 new ActionRowBuilder().addComponents(
                     new ButtonBuilder()
-                        .setCustomId(`tix:review:${t.number}`)
+                        .setCustomId(`tix:review:${t.number}:${t.type}:${t.claimerId ?? '0'}`)
                         .setLabel('Leave a Review')
                         .setEmoji('⭐')
                         .setStyle(ButtonStyle.Primary)
@@ -180,29 +194,37 @@ async function dmOpener(client, t, closedBy, reason) {
             )
     }
 
-    try {
-        await user.send(v2(finish(c, 'dm')))
-        if (wantsReview) {
-            store.addReview(t.number, {
-                openerId: t.openerId,
-                claimerId: t.claimerId,
-                type: t.type,
-                label: typeLabel(t),
-                closedAt: Date.now(),
-            })
-        }
-    } catch {
-        // DMs closed
+    await user.send(v2(finish(c, 'dm'))).catch(() => {}) // DMs closed
+}
+
+// Button / form IDs: tix:review:<number>:<type>:<claimerId>
+function parseReview(number, type, claimerId) {
+    const def = config.orders.services[type]
+    return {
+        number: Number(number),
+        type,
+        claimerId: claimerId && claimerId !== '0' ? claimerId : null,
+        label: def?.title ?? def?.label ?? 'Order',
     }
 }
 
-async function handleReviewButton(interaction, number) {
-    const review = store.getReview(number)
-    if (!review) return interaction.reply({ content: 'This review has already been submitted or has expired.', flags: MessageFlags.Ephemeral })
-    if (review.openerId !== interaction.user.id) return interaction.reply({ content: 'This isn\'t your order.', flags: MessageFlags.Ephemeral })
+const alreadyReviewed = (interaction) =>
+    interaction.reply({ content: 'You already left a review for this order. Thank you!', flags: MessageFlags.Ephemeral })
+
+async function handleReviewButton(interaction, number, type, claimerId) {
+    // Old buttons (sent before this update) only had the number
+    if (!type) {
+        const old = store.getReview(Number(number))
+        if (!old) return interaction.reply({ content: 'This review link is from an older version and has expired. Sorry!', flags: MessageFlags.Ephemeral })
+        type = old.type
+        claimerId = old.claimerId ?? '0'
+    }
+
+    const review = parseReview(number, type, claimerId)
+    if (store.isReviewed(review.number)) return alreadyReviewed(interaction)
 
     const modal = new ModalBuilder()
-        .setCustomId(`tix:reviewform:${number}`)
+        .setCustomId(`tix:reviewform:${review.number}:${review.type}:${review.claimerId ?? '0'}`)
         .setTitle(`Review ${review.label}`.slice(0, 45))
         .addLabelComponents(
             new LabelBuilder()
@@ -221,11 +243,52 @@ async function handleReviewButton(interaction, number) {
     await interaction.showModal(modal)
 }
 
-async function handleReviewSubmit(interaction, number) {
-    const review = store.getReview(number)
-    if (!review || review.openerId !== interaction.user.id) {
-        return interaction.reply({ content: 'This review has already been submitted or has expired.', flags: MessageFlags.Ephemeral })
+// Swap the review button on the DM for a "submitted" line so it can't be pressed again
+function withoutReviewButton(message) {
+    const json = message.components.map((c) => (c.toJSON ? c.toJSON() : c))
+    const box = json.find((c) => c.type === ComponentType.Container)
+    if (!box) return null
+
+    const index = box.components.findIndex((c) => c.type === ComponentType.ActionRow)
+    if (index === -1) return null
+    box.components.splice(index, 1, { type: ComponentType.TextDisplay, content: '✅ **Review submitted.** Thank you!' })
+    return json
+}
+
+// Same layout as the /review command: banner, New Review, details, footer image.
+// Star emoji: orders.reviews.starEmoji in config (falls back to your /review star).
+function buildReviewPost(designerId, submitterId, rating, feedback) {
+    const star = config.orders.reviews.starEmoji ?? '<:Star:1475265205960179825>'
+    const banner = config.display.review?.banner && config.images.bannerUrl
+    const footer = config.display.review?.footer && config.images.footerImageUrl
+    const largeSeparator = () => new SeparatorBuilder().setDivider(true).setSpacing(SeparatorSpacingSize.Large)
+    const image = (url) => new MediaGalleryBuilder().addItems(new MediaGalleryItemBuilder().setURL(url))
+
+    const c = new ContainerBuilder()
+    if (banner) c.addMediaGalleryComponents(image(banner)).addSeparatorComponents(largeSeparator())
+
+    c.addTextDisplayComponents(
+        new TextDisplayBuilder().setContent('## New Review'),
+        new TextDisplayBuilder().setContent(
+            `**Review for:** ${designerId ? `<@${designerId}>` : 'N/A'}\n` +
+            `**Rating:** ${star.repeat(rating)}\n` +
+            `**Submitted by:** <@${submitterId}>\n` +
+            `**Reason:** ${feedback}`
+        )
+    )
+
+    if (footer) c.addSeparatorComponents(largeSeparator()).addMediaGalleryComponents(image(footer))
+
+    return {
+        components: [c],
+        flags: MessageFlags.IsComponentsV2,
+        allowedMentions: { users: designerId ? [designerId] : [] },
     }
+}
+
+async function handleReviewSubmit(interaction, number, type, claimerId) {
+    const review = parseReview(number, type, claimerId)
+    if (store.isReviewed(review.number)) return alreadyReviewed(interaction)
 
     const rating = Number(interaction.fields.getTextInputValue('rating'))
     if (!Number.isInteger(rating) || rating < 1 || rating > 5) {
@@ -234,25 +297,34 @@ async function handleReviewSubmit(interaction, number) {
     const feedback = interaction.fields.getTextInputValue('feedback').trim()
 
     const channel = await interaction.client.channels.fetch(config.REVIEW_CHANNEL_ID).catch(() => null)
-    if (!channel) return interaction.reply({ content: 'Reviews aren\'t set up right now. Sorry!', flags: MessageFlags.Ephemeral })
+    if (!channel) {
+        console.error('[Tickets] REVIEW_CHANNEL_ID is missing or the bot can\'t see it.')
+        return interaction.reply({ content: 'Reviews aren\'t set up right now. Sorry!', flags: MessageFlags.Ephemeral })
+    }
 
-    const c = container('review').addTextDisplayComponents(
-        text(`## ${'⭐'.repeat(rating)}${'☆'.repeat(5 - rating)} New Review`),
-        text(infoList([
-            ['Customer', `<@${review.openerId}>`],
-            ['Designer', review.claimerId ? `<@${review.claimerId}>` : 'N/A'],
-            ['Service', review.label],
-            ['Order', `#${pad(number)}`],
-        ])),
-        text(quote(feedback))
-    )
+    // Mark first so a double submit can't post twice
+    store.markReviewed(review.number)
 
-    await channel.send(v2(finish(c, 'review'), { allowedMentions: { parse: [] } }))
-    store.removeReview(number)
+    try {
+        await channel.send(buildReviewPost(review.claimerId, interaction.user.id, rating, feedback))
+    } catch (err) {
+        store.unmarkReviewed(review.number)
+        console.error('[Tickets] Failed to post review:', err.message)
+        return interaction.reply({ content: 'Your review couldn\'t be posted. Please try again in a bit.', flags: MessageFlags.Ephemeral })
+    }
 
-    await interaction.reply({ content: 'Thanks for your review! ⭐', flags: MessageFlags.Ephemeral })
+    const updated = interaction.isFromMessage?.() && interaction.message ? withoutReviewButton(interaction.message) : null
+    if (updated) {
+        await interaction.update({ components: updated, flags: MessageFlags.IsComponentsV2 })
+        await interaction.followUp({ content: 'Thanks for your review! ⭐', flags: MessageFlags.Ephemeral }).catch(() => {})
+    } else {
+        await interaction.reply({ content: 'Thanks for your review! ⭐', flags: MessageFlags.Ephemeral })
+    }
 }
 
+// ---------- Close ----------
+
+// Shared by the Close button, /ticket close, close requests and auto-close.
 async function performClose(channel, t, closedBy, reason) {
     if (closing.has(channel.id)) return { error: 'This ticket is already closing.' }
     closing.add(channel.id)
@@ -315,6 +387,8 @@ function closeError(member, t, channelId) {
         : 'You can\'t close this ticket.'
 }
 
+// ---------- Close requests ----------
+
 async function requestClose(channel, t, member, reason) {
     if (!canManage(member, t)) return { error: 'You can\'t send a close request on this ticket.' }
     if (t.closeRequest) return { error: 'There is already a close request waiting for a response.' }
@@ -354,6 +428,7 @@ async function answerCloseRequest(interaction, channel, t, accept) {
     }
 }
 
+// Auto-close requests nobody answered
 async function checkCloseRequests(client) {
     const now = Date.now()
     for (const t of store.all()) {

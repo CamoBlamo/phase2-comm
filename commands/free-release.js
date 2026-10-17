@@ -30,7 +30,7 @@ module.exports = {
 
             const channel = interaction.guild.channels.cache.get('1555741885836828682')
 
-            const allowedRoles = ['1555741703980458084', '1555741675085762672']
+            const allowedRoles = ['1555741703980458084', '1555741675085762672', '1555741671289921676']
 
             if (!interaction.member.roles.cache.hasAny(...allowedRoles)) {
                 return interaction.reply({
@@ -42,10 +42,11 @@ module.exports = {
             const footerImage = new MediaGalleryBuilder()
                 .addItems([{ media: { url: 'https://yumi.onl/api/files/6acc1e04b73ec78bec87e49a/raw' } }])
 
+            const bannerImage = new MediaGalleryBuilder()
+                .addItems([{ media: { url: 'https://yumi.onl/api/files/6acc1e04b73ec78bec87e49a/raw' } }])
+
             const container = new ContainerBuilder()
-                .addTextDisplayComponents(
-                    new TextDisplayBuilder().setContent('## <:phase2:1555815263734341673> Free Release')
-                )
+                .addMediaGalleryComponents(bannerImage)
                 .addSeparatorComponents(
                     new SeparatorBuilder()
                         .setDivider(true)
@@ -77,6 +78,7 @@ module.exports = {
                 )
                 .addMediaGalleryComponents(footerImage)
 
+            try {
             await channel.send({
                 components: [container],
                 flags: [MessageFlags.IsComponentsV2]
@@ -86,5 +88,11 @@ module.exports = {
                 content: '<:Checkmark:1558670921731149985> Sucessfully sent free release.',
                 flags: [MessageFlags.Ephemeral]
             })
+        } catch {
+            await interaction.reply({
+                content: '<:Cross:1558367653544984770> Failed to run command.',
+                flags: [MessageFlags.Ephemeral]
+            })
+        }
         }
 }

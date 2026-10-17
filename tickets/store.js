@@ -1,3 +1,4 @@
+// Saves tickets + pending reviews to data/tickets.json so they survive restarts
 const fs = require('fs')
 const path = require('path')
 
@@ -7,9 +8,9 @@ const REVIEW_TTL_MS = 14 * 24 * 60 * 60 * 1000
 function load() {
     try {
         const data = JSON.parse(fs.readFileSync(FILE, 'utf8'))
-        return { ounter: data.counter ?? 0, tickets: data.tickets ?? {}, reviews: data.reviews ?? {} }
+        return { counter: data.counter ?? 0, tickets: data.tickets ?? {}, reviews: data.reviews ?? {}, reviewed: data.reviewed ?? {} }
     } catch {
-        return { counter: 0, tickets: {}, reviews: {} }
+        return { counter: 0, tickets: {}, reviews: {}, reviewed: {} }
     }
 }
 
@@ -39,12 +40,14 @@ function set(channelId, ticket) {
     data.tickets[channelId] = rest
     save(data)
 }
- 
+
 function remove(channelId) {
     const data = load()
     delete data.tickets[channelId]
     save(data)
 }
+
+// ---------- Reviews ----------
 
 function addReview(number, info) {
     const data = load()
@@ -52,18 +55,39 @@ function addReview(number, info) {
     for (const [n, r] of Object.entries(data.reviews)) {
         if (now - r.closedAt > REVIEW_TTL_MS) delete data.reviews[n]
     }
-    data.reviews[number] = info,
+    data.reviews[number] = info
     save(data)
 }
 
 function getReview(number) {
     return load().reviews[number] ?? null
 }
- 
+
 function removeReview(number) {
     const data = load()
     delete data.reviews[number]
     save(data)
 }
 
-module.exports = { nextNumber, get, all, set, remove, addReview, getReview, removeReview }
+// Orders that already have a review (stops double reviews)
+function isReviewed(number) {
+    return Boolean(load().reviewed[number])
+}
+
+function markReviewed(number) {
+    const data = load()
+    data.reviewed[number] = Date.now()
+    save(data)
+}
+
+function unmarkReviewed(number) {
+    const data = load()
+    delete data.reviewed[number]
+    save(data)
+}
+
+module.exports = {
+    nextNumber, get, all, set, remove,
+    addReview, getReview, removeReview,
+    isReviewed, markReviewed, unmarkReviewed,
+}
