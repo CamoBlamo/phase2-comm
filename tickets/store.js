@@ -1,7 +1,7 @@
 const fs = require('fs')
 const path = require('path')
 
-const FILE = path.join(__dirname, '..', 'data', 'tickets.js')
+const FILE = path.join(__dirname, '..', 'data', 'tickets.json')
 const REVIEW_TTL_MS = 14 * 24 * 60 * 60 * 1000
 
 function load() {
